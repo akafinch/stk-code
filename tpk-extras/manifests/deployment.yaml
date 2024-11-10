@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stk-tpk-server
+  labels:
+    app: supertuxkart
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: supertuxkart
+  template:
+    metadata:
+      labels:
+        app: supertuxkart
+    spec:
+      containers:
+      - name: supertuxkart
+        image: akafinch/stk-tpk-server:latest # Replace with your Docker Registry image path
+        ports:
+        - containerPort: 2757
+        - containerPort: 2759
+        # Uncomment and adjust resource requests/limits as needed
+        # resources:
+        #   requests:
+        #     memory: "256Mi"
+        #     cpu: "250m"
+        #   limits:
+        #     memory: "512Mi"
+        #     cpu: "500m"
+        # Uncomment and set environment variables if needed
+        # env:
+        # - name: ENV_VAR_NAME
+        #   value: "value"
+
