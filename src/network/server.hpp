@@ -113,6 +113,14 @@ protected:
     std::string m_current_track;
 
     std::string m_country_code;
+
+    /* TrafficPeak analytics variables */
+    std::string m_tpk_uri;
+    std::string m_tpk_token;
+    std::string m_tpk_table;
+    std::string m_tpk_uid;
+    std::string m_tpk_pwd;
+
 public:
 
          /** Initialises the object from an XML node. */
@@ -132,6 +140,11 @@ public:
     // ------------------------------------------------------------------------
     /** Returns the lower case name of the server. */
     const std::string& getLowerCaseName() const { return m_lower_case_name; }
+    // ------------------------------------------------------------------------
+    /** getters for trafficpeak variables **/
+    const std::string& getTpkUri() const { return m_tpk_uri; }
+    const std::string& getTpkUid() const { return m_tpk_uid; }
+    const std::string& getTpkPwd() const { return m_tpk_pwd; }
     // ------------------------------------------------------------------------
     /** Returns the name of the server. */
     const irr::core::stringw& getName() const { return m_name; }

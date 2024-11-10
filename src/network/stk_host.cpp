@@ -34,6 +34,7 @@
 #include "network/protocol_manager.hpp"
 #include "network/server_config.hpp"
 #include "network/child_loop.hpp"
+#include "network/server.hpp"
 #include "network/stk_ipv6.hpp"
 #include "network/stk_peer.hpp"
 #include "utils/log.hpp"
@@ -799,6 +800,11 @@ void STKHost::mainLoop(ProcessType pt)
 
     STKProcess::init(pt);
     Log::info("STKHost", "Listening has been started.");
+    
+    // std::string uri
+    // uri = Server::getTpkUri();
+    // Log::info("STKHost", "TPK endpoint listed as [] %s ]", Server::getTpkUri().c_str());
+
     ENetEvent event;
     ENetHost* host = m_network->getENetHost();
     const bool is_server = NetworkConfig::get()->isServer();

@@ -165,6 +165,18 @@ void loadServerConfigXML(const XMLNode* root, bool default_config)
         g_server_params[i]->findYourDataInAChildOf(root);
 
     delete root;
+    // ===========================
+    // Logging Server Configuration
+    // ===========================
+    Log::info("ServerConfig", "===== Server Configuration Loaded =====");
+    Log::info("ServerConfig", "TPK Endpoint: %s", m_tpk_uri.c_str());
+    Log::info("ServerConfig", "TPK Table: %s", m_tpk_table.c_str());
+    Log::info("ServerConfig", "TPK Token: %s", m_tpk_token.c_str());
+    Log::info("ServerConfig", "TPK Basic Auth UID: %s", m_tpk_basic_auth_uid.c_str());
+    Log::info("ServerConfig", "TPK Basic Auth PWD: %s", m_tpk_basic_auth_pwd.c_str());
+    Log::info("ServerConfig", "===== End of Configuration =====");
+
+
 }   // loadServerConfigXML
 
 // ----------------------------------------------------------------------------

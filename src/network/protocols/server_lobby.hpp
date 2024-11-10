@@ -22,6 +22,7 @@
 #include "network/protocols/lobby_protocol.hpp"
 #include "utils/cpp2011.hpp"
 #include "utils/time.hpp"
+#include "network/server_analytics.hpp"
 
 #include "irrString.h"
 
@@ -237,6 +238,9 @@ private:
     std::atomic<int> m_current_ai_count;
 
     std::atomic<uint64_t> m_last_success_poll_time;
+
+    // store the server analytics engine pointer
+    std::shared_ptr<ServerAnalytics> m_analytics;
 
     uint64_t m_last_unsuccess_poll_time, m_server_started_at, m_server_delay;
 

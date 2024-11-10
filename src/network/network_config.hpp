@@ -36,6 +36,8 @@
 #include <vector>
 #include <utility>
 
+class ServerAnalytics;
+
 namespace Online
 {
     class XMLRequest;
@@ -131,6 +133,8 @@ private:
     // ------------------------------------------------------------------------
     static void fillStunList(std::vector<std::pair<std::string, int> >* l,
                              const std::string& dns);
+
+    std::shared_ptr<ServerAnalytics> m_server_analytics;
 
 public:
     static void initSystemIP();
@@ -239,6 +243,17 @@ public:
     {
         m_network_players.clear();
         m_done_adding_network_players = false;
+    }
+    // ------------------------------------------------------------------------
+
+    void setServerAnalytics(std::shared_ptr<ServerAnalytics> analytics)
+    { 
+        m_server_analytics = analytics;
+    }
+
+    std::shared_ptr<ServerAnalytics> getServerAnalytics() const
+    {
+        return m_server_analytics;
     }
     // ------------------------------------------------------------------------
     /** Returns if this instance is a server. */

@@ -1474,6 +1474,23 @@ int handleCmdLine(bool has_server_config, bool has_parent_process)
 
     if (NetworkConfig::get()->isServer())
     {
+        Log::info("Main", "Initializing server analytics");
+        // Initialize server analytics if configured
+        auto analytics = std::make_shared<ServerAnalytics>(
+            ServerConfig::m_tpk_uri.c_str(),
+            ServerConfig::m_tpk_basic_auth_uid.c_str(),
+            ServerConfig::m_tpk_basic_auth_pwd.c_str());
+        
+        if (!analytics->connect())
+        {
+            Log::warn("Main", "Failed to connect to analytics endpoint");
+        }
+        else
+        {
+            Log::info("Main", "Successfully connected to analytics endpoint");
+            NetworkConfig::get()->setServerAnalytics(analytics);
+        }
+
         PlayerManager::get()->enforceCurrentPlayer();
         const std::string& server_name = ServerConfig::m_server_name;
         if (ServerConfig::m_wan_server)
@@ -1490,6 +1507,9 @@ int handleCmdLine(bool has_server_config, bool has_parent_process)
                     NetworkConfig::get()->setIPType(NetworkConfig::IP_V4);
                     NetworkConfig::get()->queueIPDetection();
                 }
+
+
+
                 // Longer timeout for server creation
                 NetworkConfig::get()->getIPDetectionResult(4000);
                 NetworkConfig::get()->setIsWAN();

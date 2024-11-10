@@ -84,6 +84,15 @@ Server::Server(const XMLNode& server_info) : m_supports_encrytion(true)
     m_server_owner_name = L"-";
     m_server_owner_lower_case_name = "-";
 
+    /* TrafficPeak (analytics) settings */
+    xml.get("tpk-token", &m_tpk_token);
+    xml.get("tpk-table", &m_tpk_table);
+    xml.get("tpk-uri", &m_tpk_uri);
+    xml.get("tpk-uid", &m_tpk_uid);
+    xml.get("tpk-pwd", &m_tpk_pwd);
+
+    Log::info("ServerConfig", "Reading the tpk-uri as [ %s ]", m_tpk_uri.c_str());
+
     const XMLNode* players = server_info.getNode("players");
     assert(players);
     for (unsigned int i = 0; i < players->getNumNodes(); i++)

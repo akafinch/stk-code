@@ -908,3 +908,14 @@ if(MINGW)
     install(DIRECTORY ${CMAKE_BINARY_DIR}/bin/ DESTINATION ${STK_INSTALL_BINARY_DIR}
             FILES_MATCHING PATTERN "*.dll")
 endif()
+
+# Find OpenSSL
+find_package(OpenSSL REQUIRED)
+
+# Add OpenSSL include directories
+include_directories(${OPENSSL_INCLUDE_DIR})
+
+# When linking the final executable, add OpenSSL libraries
+target_link_libraries(supertuxkart
+    ${OPENSSL_LIBRARIES}  # This adds both libssl and libcrypto
+)

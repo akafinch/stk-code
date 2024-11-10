@@ -234,6 +234,8 @@ ServerLobby::ServerLobby() : LobbyProtocol()
     m_registered_for_once_only = false;
     setHandleDisconnections(true);
     m_state = SET_PUBLIC_ADDRESS;
+    // Grab the server analytics engine:
+    m_analytics = NetworkConfig::get()->getServerAnalytics();
     m_save_server_config = true;
     if (ServerConfig::m_ranked)
     {

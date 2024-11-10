@@ -449,6 +449,33 @@ namespace ServerConfig
         "If true this server will allow AI instance to be connected from "
         "anywhere. (other than LAN network only)"));
 
+    SERVER_CFG_PREFIX StringServerConfigParam m_tpk_token
+        SERVER_CFG_DEFAULT(StringServerConfigParam("TPK Token",
+        "tpk-token",
+        "Token for TPK endpoint, required for analytics to function."));
+
+    SERVER_CFG_PREFIX StringServerConfigParam m_tpk_table
+        SERVER_CFG_DEFAULT(StringServerConfigParam("TPK Table",
+        "tpk-table",
+        "Name of the TPK Table analytics will be dropped into; required "
+        "for analytics to function."));
+
+    SERVER_CFG_PREFIX StringServerConfigParam m_tpk_uri
+        SERVER_CFG_DEFAULT(StringServerConfigParam("TPK URI",
+        "tpk-url",
+        "HTTPS endpoint for analytics data; required for analytics to "
+        "function."));
+
+    SERVER_CFG_PREFIX StringServerConfigParam m_tpk_basic_auth_uid
+        SERVER_CFG_DEFAULT(StringServerConfigParam("TPK Basic Auth UID",
+        "tpk-uid",
+        "Basic Auth UID for TPK endpoint, required for analytics to function."));
+
+    SERVER_CFG_PREFIX StringServerConfigParam m_tpk_basic_auth_pwd
+        SERVER_CFG_DEFAULT(StringServerConfigParam("TPK Basic Auth PWD",
+        "tpk-pwd",
+        "Basic Auth PWD for TPK endpoint, required for analytics to function."));
+
     // ========================================================================
     /** Server version, will be advanced if there are protocol changes. */
     static const uint32_t m_server_version = 6;
