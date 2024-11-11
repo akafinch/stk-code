@@ -1,7 +1,8 @@
 # synthetic-match.py 
 # synthetic telemetry generation for testing STK data sent to TrafficPeak
 # by Chris Finch / cfinch@akamai.com / 2024.10.30
-#
+# 
+# format: python3 synthetic-match.py <matchid:int>:<trackid:int> <totalevents:int> <numplayers:int[1-8]>
 
 import argparse
 import requests
