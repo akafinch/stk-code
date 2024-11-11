@@ -19,6 +19,25 @@ TLSConnection::TLSConnection() : m_initialized(false)
         Log::error("TLSConnection", "Failed to load certificate bundle");
         return;
     }
+    
+    // Add certificate store status logging
+    X509_STORE* store = SSL_CTX_get_cert_store(m_ctx);
+    if (!store) {
+        Log::error("TLSConnection", "No certificate store available");
+    } else {
+        Log::debug("TLSConnection", "Certificate store initialized");
+        // Optional: Log more certificate store details
+        X509_STORE_CTX* store_ctx = X509_STORE_CTX_new();
+        if (store_ctx) {
+            int num_certs = 0;
+            // Count trusted certificates
+            X509_STORE_CTX_init(store_ctx, store, nullptr, nullptr);
+            STACK_OF(X509_OBJECT)* objs = X509_STORE_get0_objects(store);
+            num_certs = sk_X509_OBJECT_num(objs);
+            Log::debug("TLSConnection", "Number of certificates in store: %d", num_certs);
+            X509_STORE_CTX_free(store_ctx);
+        }
+    }
 #elif defined(ENABLE_CRYPTO_MBEDTLS)
     mbedtls_ssl_init(&m_ssl);
     mbedtls_ssl_config_init(&m_conf);
@@ -70,21 +89,52 @@ bool TLSConnection::connect(const SocketAddress& addr)
 #ifdef ENABLE_CRYPTO_OPENSSL
     m_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (m_socket < 0) {
-        Log::error("TLSConnection", "Failed to create socket");
+        Log::error("TLSConnection", "Failed to create socket: %s", strerror(errno));
         return false;
     }
     
+    Log::debug("TLSConnection", "Attempting to connect to %s", addr.toString().c_str());
     if (::connect(m_socket, addr.getSockaddr(), addr.getSocklen()) != 0) {
-        Log::error("TLSConnection", "Failed to connect socket");
+        Log::error("TLSConnection", "Failed to connect socket: %s", strerror(errno));
         return false;
     }
     
     m_ssl = SSL_new(m_ctx);
-    SSL_set_fd(m_ssl, m_socket);
-    
-    if (SSL_connect(m_ssl) != 1) {
-        Log::error("TLSConnection", "SSL connection failed");
+    if (!m_ssl) {
+        Log::error("TLSConnection", "SSL_new failed: %s", 
+                   ERR_error_string(ERR_get_error(), nullptr));
         return false;
+    }
+
+    if (SSL_set_fd(m_ssl, m_socket) != 1) {
+        Log::error("TLSConnection", "SSL_set_fd failed: %s", 
+                   ERR_error_string(ERR_get_error(), nullptr));
+        return false;
+    }
+    
+    Log::debug("TLSConnection", "Starting SSL handshake");
+    int ret = SSL_connect(m_ssl);
+    if (ret != 1) {
+        int err = SSL_get_error(m_ssl, ret);
+        Log::error("TLSConnection", "SSL handshake failed: %s (error code: %d)", 
+                   ERR_error_string(ERR_get_error(), nullptr), err);
+        return false;
+    }
+
+    if (SSL_connect(m_ssl) == 1) {
+        Log::debug("TLSConnection", "SSL Connection established:");
+        Log::debug("TLSConnection", "  Protocol: %s", SSL_get_version(m_ssl));
+        Log::debug("TLSConnection", "  Cipher: %s", SSL_get_cipher(m_ssl));
+        
+        X509* cert = SSL_get_peer_certificate(m_ssl);
+        if (cert) {
+            char* subject = X509_NAME_oneline(X509_get_subject_name(cert), nullptr, 0);
+            Log::debug("TLSConnection", "  Server certificate subject: %s", subject);
+            OPENSSL_free(subject);
+            X509_free(cert);
+        } else {
+            Log::warn("TLSConnection", "  No server certificate received");
+        }
     }
 #elif defined(ENABLE_CRYPTO_MBEDTLS)
     char port_str[6];

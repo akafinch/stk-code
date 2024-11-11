@@ -42,6 +42,8 @@ HTTPClient::~HTTPClient()
 
 bool HTTPClient::connect()
 {
+    Log::debug("HTTPClient", "Starting connection to URI: %s", m_uri.c_str());
+    
     // Parse the URI to extract host and path
     std::string protocol, host, path;
     unsigned short port = 443; // Default HTTPS port
@@ -49,7 +51,7 @@ bool HTTPClient::connect()
     // Simple URI parsing
     size_t pos = m_uri.find("://");
     if (pos == std::string::npos) {
-        Log::error("HTTPClient", "Invalid URI: %s", m_uri.c_str());
+        Log::error("HTTPClient", "Invalid URI format: %s", m_uri.c_str());
         return false;
     }
     protocol = m_uri.substr(0, pos);
@@ -62,6 +64,17 @@ bool HTTPClient::connect()
         host = m_uri.substr(host_start, path_start - host_start);
         path = m_uri.substr(path_start);
     }
+
+    Log::debug("HTTPClient", "Parsed connection details - Host: %s, Port: %d, Path: %s",
+               host.c_str(), port, path.c_str());
+
+    SocketAddress server_addr(host, port);
+    if (server_addr.isUnset()) {
+        Log::error("HTTPClient", "Failed to resolve address for %s", host.c_str());
+        return false;
+    }
+    
+    Log::debug("HTTPClient", "Resolved address: %s", server_addr.toString().c_str());
 
     // Construct and log the complete URL with parameters
     std::string complete_url = protocol + "://" + host + path;
@@ -78,8 +91,6 @@ bool HTTPClient::connect()
         port = static_cast<unsigned short>(std::stoi(host.substr(port_pos + 1)));
         host = host.substr(0, port_pos);
     }
-
-    SocketAddress server_addr(host, port);
 
     // Establish TLS connection
     if (!m_tls_conn.connect(server_addr)) {
