@@ -87,10 +87,18 @@ TLSConnection::~TLSConnection()
 bool TLSConnection::connect(const SocketAddress& addr)
 {
 #ifdef ENABLE_CRYPTO_OPENSSL
-    m_socket = socket(AF_INET, SOCK_STREAM, 0);
+    // Try IPv6 first, then fall back to IPv4
+    m_socket = socket(AF_INET6, SOCK_STREAM, 0);
     if (m_socket < 0) {
-        Log::error("TLSConnection", "Failed to create socket: %s", strerror(errno));
-        return false;
+        Log::debug("TLSConnection", "IPv6 socket creation failed, trying IPv4: %s", 
+                   strerror(errno));
+        // Fall back to IPv4
+        m_socket = socket(AF_INET, SOCK_STREAM, 0);
+        if (m_socket < 0) {
+            Log::error("TLSConnection", "Both IPv6 and IPv4 socket creation failed: %s", 
+                       strerror(errno));
+            return false;
+        }
     }
     
     Log::debug("TLSConnection", "Attempting to connect to %s", addr.toString().c_str());
