@@ -1,1 +1,2 @@
-kubectl apply -f deployment.yaml -f service.yaml
+echo "Deploying STK deployment and service manfests."
+kubectl --kubeconfig=kc-develop apply -f deployment.yaml -f service.yaml
