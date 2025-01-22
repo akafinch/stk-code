@@ -93,3 +93,7 @@ lib/astc-encoder
 lib/shaderc
 
 .DS_Store
+
+
+# windsurf rules
+.windsurfrules

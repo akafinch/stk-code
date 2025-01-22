@@ -10,7 +10,8 @@
 #include <mutex>
 #include <thread>
 #include <condition_variable>
-
+#include <future>
+#include <chrono>
 
 class HTTPClient {
 public:

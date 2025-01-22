@@ -87,26 +87,41 @@ TLSConnection::~TLSConnection()
 bool TLSConnection::connect(const SocketAddress& addr)
 {
 #ifdef ENABLE_CRYPTO_OPENSSL
-    // Try IPv6 first, then fall back to IPv4
-    m_socket = socket(AF_INET6, SOCK_STREAM, 0);
-    if (m_socket < 0) {
-        Log::debug("TLSConnection", "IPv6 socket creation failed, trying IPv4: %s", 
-                   strerror(errno));
-        // Fall back to IPv4
-        m_socket = socket(AF_INET, SOCK_STREAM, 0);
-        if (m_socket < 0) {
-            Log::error("TLSConnection", "Both IPv6 and IPv4 socket creation failed: %s", 
-                       strerror(errno));
-            return false;
-        }
-    }
+    // Get string representation of IP address without port
+    std::string ip_str = addr.toString(false);
+    std::string port_str = std::to_string(addr.getPort());
+
+    struct addrinfo hints = {}, *result = nullptr;
+    hints.ai_family = AF_UNSPEC;  // Allow both IPv4 and IPv6
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
     
-    Log::debug("TLSConnection", "Attempting to connect to %s", addr.toString().c_str());
-    if (::connect(m_socket, addr.getSockaddr(), addr.getSocklen()) != 0) {
-        Log::error("TLSConnection", "Failed to connect socket: %s", strerror(errno));
+    int status = getaddrinfo(ip_str.c_str(), port_str.c_str(), &hints, &result);
+    if (status != 0) {
+        Log::error("TLSConnection", "getaddrinfo failed: %s", gai_strerror(status));
         return false;
     }
-    
+
+    bool connected = false;
+    for (struct addrinfo *rp = result; rp != nullptr; rp = rp->ai_next) {
+        m_socket = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (m_socket < 0) continue;
+
+        if (::connect(m_socket, rp->ai_addr, rp->ai_addrlen) == 0) {
+            connected = true;
+            break;
+        }
+        close(m_socket);
+    }
+
+    freeaddrinfo(result);
+
+    if (!connected) {
+        Log::error("TLSConnection", "Failed to connect to %s: %s", 
+                   addr.toString().c_str(), strerror(errno));
+        return false;
+    }
+
     m_ssl = SSL_new(m_ctx);
     if (!m_ssl) {
         Log::error("TLSConnection", "SSL_new failed: %s", 
@@ -234,3 +249,4 @@ bool TLSConnection::receiveData(std::string& data, size_t length)
 #endif
     return true;
 }
+

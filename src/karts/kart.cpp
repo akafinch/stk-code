@@ -1696,6 +1696,8 @@ void Kart::update(int ticks)
         {
             RescueAnimation::create(this);
             m_last_factor_engine_sound = 0.0f;
+
+            // LIKELY TARGET FOR ANALYTICS PUSH
         }
     }
     else

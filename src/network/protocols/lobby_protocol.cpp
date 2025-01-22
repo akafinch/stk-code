@@ -19,26 +19,30 @@
 
 #include "network/protocols/lobby_protocol.hpp"
 
-#include "input/input_manager.hpp"
+#include "config/user_config.hpp"
 #include "input/device_manager.hpp"
+#include "input/input_manager.hpp"
+#include "modes/world.hpp"
+#include "network/game_setup.hpp"
+#include "network/network_config.hpp"
+#include "network/protocols/game_events_protocol.hpp"
+#include "network/protocols/game_protocol.hpp"
+#include "network/race_event_manager.hpp"
+#include "network/server_analytics.hpp"
+#include "states_screens/state_manager.hpp"
+#include "utils/log.hpp"
+
 #include "guiengine/engine.hpp"
 #include "guiengine/message_queue.hpp"
 #include "guiengine/screen_keyboard.hpp"
 #include <ge_render_info.hpp>
 #include "karts/abstract_kart.hpp"
 #include "karts/controller/controller.hpp"
-#include "modes/world.hpp"
-#include "network/game_setup.hpp"
-#include "network/network_config.hpp"
 #include "network/network_player_profile.hpp"
 #include "network/peer_vote.hpp"
-#include "network/protocols/game_protocol.hpp"
-#include "network/protocols/game_events_protocol.hpp"
-#include "network/race_event_manager.hpp"
 #include "race/race_manager.hpp"
 #include "states_screens/online/networking_lobby.hpp"
 #include "states_screens/race_result_gui.hpp"
-#include "states_screens/state_manager.hpp"
 #include "tracks/track_manager.hpp"
 #include "utils/string_utils.hpp"
 #include "utils/time.hpp"
@@ -81,6 +85,13 @@ void LobbyProtocol::loadWorld()
     if (!RaceEventManager::get())
         RaceEventManager::create();
     RaceEventManager::get()->start(gep);
+
+    // Start server analytics if configured
+    if (NetworkConfig::get()->isServer() && NetworkConfig::get()->getServerAnalytics())
+    {
+        Log::info("LobbyProtocol", "Starting server analytics for race");
+        NetworkConfig::get()->getServerAnalytics()->startRace();
+    }
 
     // Make sure that if there is only a single local player this player can
     // use all input devices.

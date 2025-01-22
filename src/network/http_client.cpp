@@ -3,6 +3,7 @@
 #include "network/http_client.hpp"
 #include "utils/string_utils.hpp"
 #include "utils/base64.hpp"
+#include "utils/time.hpp"
 #include <sstream>
 #include <iostream>
 #include <cstring>
@@ -21,8 +22,7 @@ HTTPClient::HTTPClient(const std::string& uri,
       m_connected(false),
       m_stop_thread(false)
 {
-    // Start the send thread
-    m_send_thread = std::thread(&HTTPClient::sendLoop, this);
+    // Connection and thread start will be done in connect()
 }
 
 HTTPClient::~HTTPClient()
@@ -48,88 +48,53 @@ bool HTTPClient::connect()
     std::string protocol, host, path;
     unsigned short port = 443; // Default HTTPS port
 
-    // Simple URI parsing
-    size_t pos = m_uri.find("://");
-    if (pos == std::string::npos) {
-        Log::error("HTTPClient", "Invalid URI format: %s", m_uri.c_str());
+    try {
+        // Simple URI parsing
+        size_t pos = m_uri.find("://");
+        if (pos == std::string::npos) {
+            Log::error("HTTPClient", "Invalid URI format: %s", m_uri.c_str());
+            return false;
+        }
+        protocol = m_uri.substr(0, pos);
+        size_t host_start = pos + 3;
+        size_t path_start = m_uri.find('/', host_start);
+        if (path_start == std::string::npos) {
+            host = m_uri.substr(host_start);
+            path = "/";
+        } else {
+            host = m_uri.substr(host_start, path_start - host_start);
+            path = m_uri.substr(path_start);
+        }
+
+        // Check for port in host
+        size_t port_pos = host.find(':');
+        if (port_pos != std::string::npos) {
+            port = static_cast<unsigned short>(std::stoi(host.substr(port_pos + 1)));
+            host = host.substr(0, port_pos);
+        }
+
+        SocketAddress server_addr(host, port);
+        if (server_addr.isUnset()) {
+            Log::warn("HTTPClient", "Failed to resolve address for %s - continuing without analytics", host.c_str());
+            return false;
+        }
+
+        // Try TLS connection but don't block
+        if (!m_tls_conn.connect(server_addr)) {
+            Log::warn("HTTPClient", "Failed to connect to %s:%d - continuing without analytics", host.c_str(), port);
+            return false;
+        }
+
+        m_connected = true;
+        return true;
+
+    } catch (const std::exception& e) {
+        Log::warn("HTTPClient", "Exception during connect: %s - continuing without analytics", e.what());
+        return false;
+    } catch (...) {
+        Log::warn("HTTPClient", "Unknown error during connect - continuing without analytics");
         return false;
     }
-    protocol = m_uri.substr(0, pos);
-    size_t host_start = pos + 3;
-    size_t path_start = m_uri.find('/', host_start);
-    if (path_start == std::string::npos) {
-        host = m_uri.substr(host_start);
-        path = "/";
-    } else {
-        host = m_uri.substr(host_start, path_start - host_start);
-        path = m_uri.substr(path_start);
-    }
-
-    Log::debug("HTTPClient", "Parsed connection details - Host: %s, Port: %d, Path: %s",
-               host.c_str(), port, path.c_str());
-
-    SocketAddress server_addr(host, port);
-    if (server_addr.isUnset()) {
-        Log::error("HTTPClient", "Failed to resolve address for %s", host.c_str());
-        return false;
-    }
-    
-    Log::debug("HTTPClient", "Resolved address: %s", server_addr.toString().c_str());
-
-    // Construct and log the complete URL with parameters
-    std::string complete_url = protocol + "://" + host + path;
-    if (path.find('?') == std::string::npos) {
-        complete_url += "?table=" + m_table + "&token=" + m_token;
-    } else {
-        complete_url += "&table=" + m_table + "&token=" + m_token;
-    }
-    Log::info("HTTPClient", "Connecting to URL: %s", complete_url.c_str());
-
-    // Check for port in host
-    size_t port_pos = host.find(':');
-    if (port_pos != std::string::npos) {
-        port = static_cast<unsigned short>(std::stoi(host.substr(port_pos + 1)));
-        host = host.substr(0, port_pos);
-    }
-
-    // Establish TLS connection
-    if (!m_tls_conn.connect(server_addr)) {
-        Log::error("HTTPClient", "Failed to connect to %s:%d", host.c_str(), port);
-        return false;
-    }
-
-    // Construct initial HTTP request headers
-    std::ostringstream request_stream;
-    request_stream << "GET " << path << "?" << "table=" << m_table << "&token=" << m_token << " HTTP/1.1\r\n";
-    request_stream << "Host: " << host << "\r\n";
-    request_stream << "Authorization: Basic " << constructAuthHeader() << "\r\n";
-    request_stream << "Accept: application/json\r\n";
-    request_stream << "Content-Type: application/json\r\n";
-    request_stream << "Connection: keep-alive\r\n\r\n";
-
-    std::string request = request_stream.str();
-
-    // Send the GET request to initiate the connection
-    if (!m_tls_conn.sendData(request)) {
-        Log::error("HTTPClient", "Failed to send initial GET request.");
-        return false;
-    }
-
-    // Simple response check (not robust)
-    std::string response;
-    if (!m_tls_conn.receiveData(response, 1024)) {
-        Log::error("HTTPClient", "Failed to receive response from server.");
-        return false;
-    }
-
-    if (response.find("200 OK") == std::string::npos) {
-        Log::error("HTTPClient", "Server responded with an error: %s", response.c_str());
-        return false;
-    }
-
-    m_connected = true;
-    Log::info("HTTPClient", "Successfully connected to %s", m_uri.c_str());
-    return true;
 }
 
 bool HTTPClient::sendJSON(const std::string& json_message)
@@ -170,18 +135,23 @@ std::string HTTPClient::constructAuthHeader()
 void HTTPClient::sendLoop()
 {
     while (true) {
-        std::unique_lock<std::mutex> lock(m_queue_mutex);
-        m_cond_var.wait(lock, [this] { return !m_message_queue.empty() || m_stop_thread; });
+        std::vector<std::string> messages_to_send;
+        {
+            std::unique_lock<std::mutex> lock(m_queue_mutex);
+            m_cond_var.wait(lock, [this] { return !m_message_queue.empty() || m_stop_thread; });
 
-        if (m_stop_thread && m_message_queue.empty()) {
-            break;
-        }
+            if (m_stop_thread && m_message_queue.empty()) {
+                break;
+            }
 
-        while (!m_message_queue.empty()) {
-            std::string message = m_message_queue.front();
-            m_message_queue.pop();
-            lock.unlock();
+            // Batch up to 10 messages at a time
+            while (!m_message_queue.empty() && messages_to_send.size() < 10) {
+                messages_to_send.push_back(m_message_queue.front());
+                m_message_queue.pop();
+            }
+        } // unlock here
 
+        for (const std::string& message : messages_to_send) {
             // Construct HTTP POST request
             std::ostringstream post_stream;
             // Extract path and query from URI
@@ -222,18 +192,28 @@ void HTTPClient::sendLoop()
 
             std::string post_request = post_stream.str();
 
-            // Send the POST request
-            if (!m_tls_conn.sendData(post_request)) {
-                Log::error("HTTPClient", "Failed to send POST request.");
-                disconnect();
-                break;
+            try {
+                // Send the POST request with a short timeout
+                if (!m_tls_conn.sendData(post_request)) {
+                    Log::warn("HTTPClient", "Failed to send analytics data");
+                    continue;
+                }
+
+                // Read response with a short timeout
+                std::string response;
+                if (!m_tls_conn.receiveData(response, 4096)) {
+                    Log::debug("HTTPClient", "No response received");
+                }
             }
-
-            // Optionally, you can handle the response here
-            // For simplicity, we'll skip it
-            Log::info("HTTPClient", "Sent JSON message: %s", message.c_str());
-
-            lock.lock();
+            catch (const std::exception& e) {
+                Log::warn("HTTPClient", "Error in analytics: %s", e.what());
+            }
+            catch (...) {
+                Log::warn("HTTPClient", "Unknown error in analytics");
+            }
         }
+        
+        // Sleep outside the critical section
+        StkTime::sleep(1);
     }
 }
