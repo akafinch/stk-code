@@ -1481,6 +1481,12 @@ int handleCmdLine(bool has_server_config, bool has_parent_process)
             ServerConfig::m_tpk_basic_auth_uid.c_str(),
             ServerConfig::m_tpk_basic_auth_pwd.c_str());
         
+        // Add debug logging for configuration values
+        Log::debug("Main", "Analytics config - URI: %s, Auth UID: %s", 
+                ServerConfig::m_tpk_uri.c_str(),
+                ServerConfig::m_tpk_basic_auth_uid.c_str());
+
+
         if (!analytics->connect())
         {
             Log::warn("Main", "Failed to connect to analytics endpoint");

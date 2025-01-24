@@ -90,6 +90,9 @@
 #include "utils/translation.hpp"
 #include "utils/vs.hpp"
 
+#include "network/server_analytics.hpp"
+#include "utils/string_utils.hpp"
+
 #include <ICameraSceneNode.h>
 #include <IDummyTransformationSceneNode.h>
 #include <ISceneManager.h>
@@ -1646,8 +1649,12 @@ void Kart::update(int ticks)
             m_powerup->use();
         else
         {
-            if(!getKartAnimation())
+            if(!getKartAnimation()) {
                 beep();
+                std::string player_id = StringUtils::wideToUtf8(getController()->getName());
+                Log::info("Kart", "Player %s beeping!", 
+                    player_id.c_str());
+            }
         }
         World::getWorld()->onFirePressed(getController());
         m_fire_clicked = 1;
@@ -1685,22 +1692,60 @@ void Kart::update(int ticks)
 #endif
 
     PROFILER_PUSH_CPU_MARKER("Kart::Update (material)", 0x60, 0x34, 0x7F);
-    if (!material)   // kart falling off the track
+if (!material)   // kart falling off the track
+{
+    Log::info("Kart", "[updatePhysics] No material detected for kart %d at (%.2f, %.2f, %.2f)", 
+            getWorldKartId(), getXYZ().getX(), getXYZ().getY(), getXYZ().getZ());
+
+    // let kart fall a bit before rescuing
+    const Vec3 *min, *max;
+    Track::getCurrentTrack()->getAABB(&min, &max);
+
+    float height_diff = min->getY() - getXYZ().getY();
+    Log::info("Kart", "Height difference: %.2f (threshold: 17), dist_to_sector: %.2f (threshold: 25)", 
+              height_diff, dist_to_sector);
+
+    if((min->getY() - getXYZ().getY() > 17 || dist_to_sector > 25) && !m_flying &&
+       !has_animation_before)
     {
-        // let kart fall a bit before rescuing
-        const Vec3 *min, *max;
-        Track::getCurrentTrack()->getAABB(&min, &max);
+        Log::info("Kart", "Starting rescue animation for fall-off-track, kart %d", 
+                  getWorldKartId());
 
-        if((min->getY() - getXYZ().getY() > 17 || dist_to_sector > 25) && !m_flying &&
-           !has_animation_before)
+        RescueAnimation::create(this);
+        m_last_factor_engine_sound = 0.0f;
+
+        if (NetworkConfig::get()->isServer())
         {
-            RescueAnimation::create(this);
-            m_last_factor_engine_sound = 0.0f;
+            Log::info("Kart", "Server detected, checking analytics...");
+            if (NetworkConfig::get()->getServerAnalytics())
+            {
 
-            // LIKELY TARGET FOR ANALYTICS PUSH
+                Log::debug("Kart", "Analytics available, preparing event...");
+                std::string player_id = StringUtils::wideToUtf8(getController()->getName());
+                auto* analytics = NetworkConfig::get()->getServerAnalytics().get();
+                if (analytics)
+                {
+                    Log::info("Kart", "Sending fall-off-track event to analytics for player %s", 
+                              player_id.c_str());
+                    analytics->queueAnalyticsEvent(
+                        player_id,
+                        7, // Using literal for ANALYTICS_EVENT_PLAYER_CRASHED
+                        getWorldKartId(),
+                        "rescue_fall_off_track"
+                    );
+                }
+                else
+                {
+                    Log::warn("Kart", "Analytics pointer is null");
+                }
+            }
+            else
+            {
+                Log::info("Kart", "Server analytics not available");
+            }
         }
     }
-    else
+}    else
     {
         if (!has_animation_before && material->isDriveReset() && isOnGround())
         {

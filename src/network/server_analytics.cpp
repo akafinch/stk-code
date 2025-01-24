@@ -7,6 +7,7 @@
 #include "race/race_manager.hpp"
 #include "tracks/track.hpp"
 #include "utils/time.hpp"
+#include "utils/log.hpp"
 
 ServerAnalytics::ServerAnalytics(const std::string& endpoint_uri,
                                const std::string& auth_id,
@@ -22,6 +23,10 @@ ServerAnalytics::ServerAnalytics(const std::string& endpoint_uri,
 {
     // Don't block on connection - just log and continue
     Log::info("ServerAnalytics", "Initializing analytics in background");
+
+    // Start the send thread
+    m_send_thread = std::thread(&ServerAnalytics::sendLoop, this);
+
 }
 
 ServerAnalytics::~ServerAnalytics()
@@ -46,9 +51,12 @@ bool ServerAnalytics::isConnected() const
 
 bool ServerAnalytics::connect()
 {
+    Log::debug("ServerAnalytics", "Attempting to connect to analytics server");
     // Try to connect but don't block
     try {
-        return m_http_client->connect();
+        bool success = m_http_client->connect();
+        Log::debug("ServerAnalytics", "Connection attempt result: %d", success ? 1 : 0);
+        return success;
     } catch (...) {
         Log::warn("ServerAnalytics", "Failed to connect to analytics server - continuing without analytics");
         return false;
@@ -62,10 +70,10 @@ void ServerAnalytics::disconnect()
 
 bool ServerAnalytics::sendAnalytics(const std::string& json_data)
 {
-    if (!m_http_client->isConnected()) {
+    /*if (!m_http_client->isConnected()) {
         Log::warn("ServerAnalytics", "Attempted to send analytics while not connected");
         return false;
-    }
+    }*/
 
     {
         std::lock_guard<std::mutex> lock(m_queue_mutex);
@@ -86,6 +94,8 @@ bool ServerAnalytics::sendAnalytics(const std::string& json_data)
 void ServerAnalytics::startRace()
 {
     std::lock_guard<std::mutex> lock(m_queue_mutex);
+    Log::info("ServerAnalytics", "Starting race with analytics - Connected: %d", 
+            isConnected() ? 1 : 0);
     m_race_in_progress = true;
     m_last_send_time = StkTime::getMonoTimeMs();
 }
@@ -98,20 +108,44 @@ void ServerAnalytics::endRace()
     m_cond_var.notify_one();
 }
 
-void ServerAnalytics::sendLoop()
+/*void ServerAnalytics::sendLoop()
 {
+
+    Log::info("ServerAnalytics", "Analytics send thread started");
+
     while (true) {
         std::unique_lock<std::mutex> lock(m_queue_mutex);
-        
+
+        // Log initial state
+        uint64_t current_time = StkTime::getMonoTimeMs();
+        Log::info("ServerAnalytics", "Initial state - Last send time: %lu, Current time: %lu", 
+                 m_last_send_time, current_time);
+
+        // Log before wait
+        Log::info("ServerAnalytics", "About to wait - Queue size: %d, Race in progress: %d", 
+                 m_message_queue.size(), m_race_in_progress ? 1 : 0);
+
         // Wait until we should send data
         m_cond_var.wait(lock, [this] {
             uint64_t current_time = StkTime::getMonoTimeMs();
             bool time_to_send = (current_time - m_last_send_time) >= SEND_INTERVAL;
             bool enough_data = m_message_queue.size() >= MAX_QUEUE_SIZE;
-            return (!m_message_queue.empty() && (time_to_send || enough_data)) || 
-                   (m_stop_thread && !m_message_queue.empty()) ||
-                   (!m_race_in_progress && !m_message_queue.empty());
+            
+            // Allow time-based sending even with empty queue
+            bool should_send = time_to_send || 
+                            (!m_message_queue.empty() && enough_data) || 
+                            (m_stop_thread && !m_message_queue.empty()) ||
+                            (!m_race_in_progress && !m_message_queue.empty());
+            
+            Log::debug("ServerAnalytics", "Wait condition check - Time since last: %lu, Queue size: %d, Race in progress: %d, Should send: %d",
+                    current_time - m_last_send_time, m_message_queue.size(), 
+                    m_race_in_progress ? 1 : 0, should_send ? 1 : 0);
+            
+            return should_send;
         });
+
+        // Log after wait
+        Log::info("ServerAnalytics", "Wait condition satisfied - preparing to send batch");
 
         if (m_stop_thread && m_message_queue.empty()) {
             break;
@@ -139,6 +173,74 @@ void ServerAnalytics::sendLoop()
         }
 
         lock.lock();
+    }
+}
+*/
+
+void ServerAnalytics::sendLoop()
+{
+    Log::info("ServerAnalytics", "Analytics send thread started");
+
+    while (true) {
+        std::unique_lock<std::mutex> lock(m_queue_mutex);
+        
+        // Log initial state
+        uint64_t current_time = StkTime::getMonoTimeMs();
+        Log::info("ServerAnalytics", "Initial state - Last send time: %lu, Current time: %lu", 
+                 m_last_send_time, current_time);
+
+        // Log before wait
+        Log::info("ServerAnalytics", "About to wait - Queue size: %d, Race in progress: %d", 
+                 m_message_queue.size(), m_race_in_progress ? 1 : 0);
+        
+        // Wait for either timeout or condition
+        bool predicate_satisfied = m_cond_var.wait_for(lock, 
+            std::chrono::milliseconds(SEND_INTERVAL),
+            [this] {
+                bool enough_data = m_message_queue.size() >= MAX_QUEUE_SIZE;
+                bool should_send = (!m_message_queue.empty() && enough_data) || 
+                                 (m_stop_thread && !m_message_queue.empty()) ||
+                                 (!m_race_in_progress && !m_message_queue.empty());
+                
+                Log::debug("ServerAnalytics", "Wait condition check - Queue size: %d, Race in progress: %d, Should send: %d",
+                          m_message_queue.size(), m_race_in_progress ? 1 : 0, should_send ? 1 : 0);
+                
+                return should_send;
+            });
+
+        // Log after wait - either timeout occurred or condition was met
+        Log::info("ServerAnalytics", "Wait ended - predicate satisfied: %d", 
+                 predicate_satisfied ? 1 : 0);
+
+        // Process queue if not empty
+        if (!m_message_queue.empty()) {
+            std::string batch_message = "[";
+            bool first = true;
+            while (!m_message_queue.empty()) {
+                if (!first) batch_message += ",";
+                batch_message += m_message_queue.front();
+                m_message_queue.pop();
+                first = false;
+            }
+            batch_message += "]";
+            
+            if (!batch_message.empty()) {
+                Log::info("ServerAnalytics", "Sending batch of analytics events");
+                Log::info("ServerAnalytics", "Preparing to send batch: %s", batch_message.c_str());
+                Log::info("ServerAnalytics", "HTTP Client connected: %d", m_http_client->isConnected() ? 1 : 0);
+
+                bool send_result = m_http_client->sendJSON(batch_message);
+                Log::info("ServerAnalytics", "Send result: %d", send_result ? 1 : 0);
+
+                if (!send_result) {
+                    Log::warn("ServerAnalytics", "Failed to send analytics batch");
+                }
+
+            }
+        }
+        
+        // Update last send time
+        m_last_send_time = StkTime::getMonoTimeMs();
     }
 }
 
@@ -174,7 +276,24 @@ void ServerAnalytics::queueAnalyticsEvent(const std::string& player_id,
                                         int kart_id,
                                         const std::string& metadata)
 {
-    if (!m_race_in_progress || !isConnected()) return;
+
+        // Add debug logging for analytics state
+    Log::debug("ServerAnalytics", "Analytics state - Race in progress: %d, Connected: %d",
+               m_race_in_progress ? 1 : 0, isConnected() ? 1 : 0);
+
+    if (!m_race_in_progress) 
+    {
+        Log::warn("ServerAnalytics", "Skipping event - race not in progress or not connected");
+        return;
+    }
+
+    // Queue event even if disconnected
+    if (!isConnected()) {
+        Log::info("ServerAnalytics", "HTTP client disconnected but queueing event anyway");
+    }
+
+    Log::info("ServerAnalytics", "Queueing analytics event %d for player %s (kart %d): %s",
+              event_id, player_id.c_str(), kart_id, metadata.c_str());
     
     World* world = World::getWorld();
     if (!world) return;
@@ -189,14 +308,26 @@ void ServerAnalytics::queueAnalyticsEvent(const std::string& player_id,
     event.track = (uint16_t)RaceManager::get()->getTrackName().length();
     event.kart = (uint16_t)kart->getIdent().length();
     
-    uint64_t now = StkTime::getTimeSinceEpoch();
+    // Get current time
+    time_t now = std::time(nullptr);
+    struct tm* tm_info = std::localtime(&now);  // Use localtime instead of gmtime
+    char buffer[32];
+    strftime(buffer, 32, "%Y-%m-%d %H:%M:%S", tm_info);
+
+    // Add milliseconds from STK time
+    uint64_t ms = StkTime::getMonoTimeMs() % 1000;
+        event.timestamp = StringUtils::toString(buffer) + "." + 
+        (ms < 10 ? "00" : ms < 100 ? "0" : "") + StringUtils::toString(ms);
+
+
+    /*uint64_t now = StkTime::getTimeSinceEpoch();
     uint64_t ms = now % 1000;
     time_t seconds = now / 1000;
     struct tm* tm_info = gmtime(&seconds);
     char buffer[32];
     strftime(buffer, 32, "%Y-%m-%d %H:%M:%S", tm_info);
     event.timestamp = StringUtils::toString(buffer) + "." + 
-        StringUtils::toString(ms).substr(0,3);
+        StringUtils::toString(ms).substr(0,3); */
 
     const Vec3& pos = kart->getXYZ();
     event.loc_x = pos.getX();

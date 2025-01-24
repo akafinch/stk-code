@@ -22,7 +22,8 @@ HTTPClient::HTTPClient(const std::string& uri,
       m_connected(false),
       m_stop_thread(false)
 {
-    // Connection and thread start will be done in connect()
+    // Start the send thread immediately
+    m_send_thread = std::thread(&HTTPClient::sendLoop, this);
 }
 
 HTTPClient::~HTTPClient()
@@ -42,7 +43,12 @@ HTTPClient::~HTTPClient()
 
 bool HTTPClient::connect()
 {
-    Log::debug("HTTPClient", "Starting connection to URI: %s", m_uri.c_str());
+    if (m_connected) {
+        Log::debug("HTTPClient", "Already connected, skipping connect()");
+        return true;
+    }
+
+    Log::info("HTTPClient", "Starting connection to URI: %s", m_uri.c_str());
     
     // Parse the URI to extract host and path
     std::string protocol, host, path;
@@ -81,33 +87,32 @@ bool HTTPClient::connect()
 
         // Try TLS connection but don't block
         if (!m_tls_conn.connect(server_addr)) {
-            Log::warn("HTTPClient", "Failed to connect to %s:%d - continuing without analytics", host.c_str(), port);
+            Log::warn("HTTPClient", "Failed to connect to %s:%d", host.c_str(), port);
+            m_connected = false;
             return false;
         }
 
         m_connected = true;
+        Log::info("HTTPClient", "Successfully connected to %s:%d - m_connected now true", host.c_str(), port);
         return true;
 
     } catch (const std::exception& e) {
-        Log::warn("HTTPClient", "Exception during connect: %s - continuing without analytics", e.what());
-        return false;
-    } catch (...) {
-        Log::warn("HTTPClient", "Unknown error during connect - continuing without analytics");
+        Log::warn("HTTPClient", "Exception during connect: %s", e.what());
+        m_connected = false;
         return false;
     }
 }
 
 bool HTTPClient::sendJSON(const std::string& json_message)
 {
-    if (!m_connected) {
-        Log::warn("HTTPClient", "Attempted to send JSON while not connected.");
-        return false;
-    }
+    Log::info("HTTPClient", "sendJSON called with message length: %d, connected: %d", 
+              (int)json_message.length(), m_connected ? 1 : 0);
 
     // Enqueue the message
     {
         std::lock_guard<std::mutex> lock(m_queue_mutex);
         m_message_queue.push(json_message);
+        Log::info("HTTPClient", "Message queued. Queue size now: %d", (int)m_message_queue.size());
     }
     m_cond_var.notify_one();
     return true;
@@ -116,12 +121,9 @@ bool HTTPClient::sendJSON(const std::string& json_message)
 void HTTPClient::disconnect()
 {
     if (m_connected) {
-        // Send a simple HTTP/1.1 connection close
-        std::string close_request = "QUIT\r\n";
-        m_tls_conn.sendData(close_request);
+        Log::info("HTTPClient", "Disconnecting from %s - setting m_connected to false", m_uri.c_str());
         m_tls_conn.disconnect();
         m_connected = false;
-        Log::info("HTTPClient", "Disconnected from %s", m_uri.c_str());
     }
 }
 
@@ -134,11 +136,22 @@ std::string HTTPClient::constructAuthHeader()
 
 void HTTPClient::sendLoop()
 {
+
+    Log::info("HTTPClient", "Send loop starting");
+
     while (true) {
+        Log::info("HTTPClient", "Send loop iteration starting");
+
         std::vector<std::string> messages_to_send;
         {
             std::unique_lock<std::mutex> lock(m_queue_mutex);
+            Log::info("HTTPClient", "Waiting for messages. Queue size: %d, Stop thread: %d", 
+                (int)m_message_queue.size(), m_stop_thread ? 1 : 0);
+
             m_cond_var.wait(lock, [this] { return !m_message_queue.empty() || m_stop_thread; });
+
+            Log::info("HTTPClient", "Wait completed. Queue size: %d, Stop thread: %d",
+                (int)m_message_queue.size(), m_stop_thread ? 1 : 0);
 
             if (m_stop_thread && m_message_queue.empty()) {
                 break;
@@ -152,6 +165,16 @@ void HTTPClient::sendLoop()
         } // unlock here
 
         for (const std::string& message : messages_to_send) {
+            // Check connection state before sending
+            if (!m_connected) {
+                Log::info("HTTPClient", "Connection needed - waiting 1 second before retry");
+                StkTime::sleep(1);  // Add a delay before reconnect
+                if (!connect()) {
+                    Log::warn("HTTPClient", "Connection attempt failed - will try again later");
+                    break;  // Exit the message loop and try again next iteration
+                }
+            }
+
             // Construct HTTP POST request
             std::ostringstream post_stream;
             // Extract path and query from URI
@@ -161,6 +184,11 @@ void HTTPClient::sendLoop()
                 Log::error("HTTPClient", "Invalid URI: %s", m_uri.c_str());
                 continue;
             }
+
+            // Log the URI and message
+            Log::info("HTTPClient", "Preparing to send to URI: %s", m_uri.c_str());
+            Log::info("HTTPClient", "Message payload: %s", message.c_str());
+
             protocol = m_uri.substr(0, pos);
             size_t host_start = pos + 3;
             size_t path_start = m_uri.find('/', host_start);
@@ -192,6 +220,10 @@ void HTTPClient::sendLoop()
 
             std::string post_request = post_stream.str();
 
+            // Log the full request (be careful with auth headers in production!)
+            Log::info("HTTPClient", "Sending HTTP request:\n%s", post_request.c_str());
+
+
             try {
                 // Send the POST request with a short timeout
                 if (!m_tls_conn.sendData(post_request)) {
@@ -202,7 +234,19 @@ void HTTPClient::sendLoop()
                 // Read response with a short timeout
                 std::string response;
                 if (!m_tls_conn.receiveData(response, 4096)) {
-                    Log::debug("HTTPClient", "No response received");
+                    Log::info("HTTPClient", "No response received - marking as disconnected");
+                    m_connected = false;
+                    // Don't try to reconnect immediately - wait for next send
+                    continue;
+                } else {
+                    Log::info("HTTPClient", "Received response:\n%s", response.c_str());
+
+                    // If server sent Connection: close, just mark as disconnected
+                    if (response.find("Connection: close") != std::string::npos) {
+                        Log::info("HTTPClient", "Server requested connection close - marking as disconnected");
+                        m_connected = false;
+                        m_tls_conn.disconnect();  // Ensure we clean up the connection
+                    }
                 }
             }
             catch (const std::exception& e) {

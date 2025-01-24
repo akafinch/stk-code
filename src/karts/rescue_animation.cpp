@@ -23,10 +23,14 @@
 #include "items/attachment.hpp"
 #include "karts/abstract_kart.hpp"
 #include "karts/kart_properties.hpp"
+#include "karts/controller/controller.hpp"
 #include "modes/follow_the_leader.hpp"
 #include "modes/three_strikes_battle.hpp"
 #include "network/network_string.hpp"
 #include "mini_glm.hpp"
+#include "network/server_analytics.hpp"
+#include "network/network_config.hpp"
+#include "utils/string_utils.hpp"
 
 #include <IAnimatedMeshSceneNode.h>
 
@@ -36,6 +40,38 @@
 RescueAnimation* RescueAnimation::create(AbstractKart* kart,
                                          bool is_auto_rescue)
 {
+    Log::info("RescueAnimation", "Creating rescue animation for kart %d", kart->getWorldKartId());
+
+    // Add analytics tracking
+    if (NetworkConfig::get()->isServer() && NetworkConfig::get()->getServerAnalytics())
+    {
+        Log::info("RescueAnimation", "Server analytics available for kart %d", 
+                  kart->getWorldKartId());
+        
+        std::string player_id = StringUtils::wideToUtf8(kart->getController()->getName());
+        ServerAnalytics* analytics = NetworkConfig::get()->getServerAnalytics().get();
+        // auto* analytics = NetworkConfig::get()->getServerAnalytics().get();
+        
+        if (analytics)
+        {
+            Log::info("RescueAnimation", 
+                     "Queueing rescue event for player %s (kart %d)", 
+                     player_id.c_str(), kart->getWorldKartId());
+            
+            analytics->queueAnalyticsEvent(
+                player_id,
+                7, // ANALYTICS_EVENT_PLAYER_CRASHED
+                kart->getWorldKartId(),
+                "rescue_animation_triggered"
+            );
+        }
+        else
+        {
+            Log::warn("RescueAnimation", "Analytics pointer is null for kart %d", 
+                      kart->getWorldKartId());
+        }
+    }
+
     // When goal phase is happening karts is made stationary, so no animation
     // will be created
     if (World::getWorld()->isGoalPhase())
